@@ -306,9 +306,9 @@ button { user-select: none; -webkit-user-select: none; }
       <div class="pane" id="p-link" hidden>
         <section>
           <h2>Build from a shopping link</h2>
-          <p class="hint">Paste the product link and the dimensions text from the product page (for example "Width: 228 cm, Depth: 95 cm, Height: 83 cm"). The planner reads the sizes from the text, guesses the kind of furniture from the link and words, and keeps the link on the piece.</p>
-          <div class="field"><label for="l-url">Product link</label><input type="url" id="l-url" placeholder="https://www.ikea.com/ca/en/p/kivik-sofa-…"></div>
-          <div class="field" style="margin-top:10px"><label for="l-text">Dimensions or details from the page</label><textarea id="l-text" placeholder="Width: 228 cm&#10;Depth: 95 cm&#10;Height: 83 cm&#10;Colour: Tibbleby beige/grey"></textarea></div>
+          <p class="hint">Paste a product link, or the whole share text from an app (Taobao: Share → Copy link). The planner reads the size and the kind of furniture from the link and its title, e.g. "200*90*85cm" or "长180 宽80 高75". If the title has no size, paste the size from the product page below. Shops don't let other websites open their pages, so it can't look inside the page itself.</p>
+          <div class="field"><label for="l-url">Product link</label><textarea id="l-url" rows="3" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://www.ikea.com/ca/en/p/kivik-sofa-…&#10;or 【淘宝】https://m.tb.cn/… 「北欧布艺沙发 200*90*85cm」"></textarea></div>
+          <div class="field" style="margin-top:10px"><label for="l-text">Size from the product page (only if the link has none)</label><textarea id="l-text" placeholder="Width: 228 cm&#10;Depth: 95 cm&#10;Height: 83 cm&#10;Colour: Tibbleby beige/grey"></textarea></div>
           <div class="row" style="margin-top:10px"><button class="btn primary" id="l-go">Build it</button></div>
           <p class="status" id="l-status" hidden></p>
         </section>
@@ -1745,6 +1745,10 @@ $('f-scan').addEventListener('change', async e => {
 
 /* Shopping link */
 const KEYWORDS = [
+  [/沙发床|沙发|贵妃/, 'sofa'], [/单人椅|休闲椅|懒人|躺椅|老虎椅/, 'armchair'], [/脚踏|脚凳|墩/, 'ottoman'], [/茶几/, 'coffee'], [/边几|角几|床头柜/, 'side'],
+  [/电视柜|地柜/, 'tvstand'], [/电视机|电视/, 'tv'], [/书桌|电脑桌|办公桌/, 'desk'], [/餐桌|饭桌/, 'dining'], [/书架|书柜|置物架|层架/, 'bookshelf'],
+  [/衣柜/, 'wardrobe'], [/餐边柜|斗柜|边柜|柜/, 'sideboard'], [/床/, 'bed'], [/地毯|地垫/, 'rug'], [/落地灯/, 'floorlamp'], [/台灯|灯/, 'tablelamp'],
+  [/绿植|盆栽|植物/, 'plant'], [/椅|凳/, 'chair'], [/桌/, 'dining'],
   [/sofa\s*bed|sleeper/, 'sofa'], [/sectional|sofa|couch|loveseat|settee/, 'sofa'], [/armchair|accent chair|lounge chair|recliner|club chair/, 'armchair'],
   [/ottoman|pouf|footstool/, 'ottoman'], [/coffee[-\s]?table/, 'coffee'], [/side[-\s]?table|end[-\s]?table|nightstand|bedside/, 'side'],
   [/dining[-\s]?table|kitchen[-\s]?table/, 'dining'], [/desk/, 'desk'], [/tv[-\s]?(stand|bench|unit|cabinet)|media[-\s]?console|entertainment/, 'tvstand'],
@@ -1762,7 +1766,10 @@ function nameFromUrl(u) {
   } catch (e) { return ''; }
 }
 function parseDims(text) {
-  const t = text.replace(/×/g, 'x').replace(/(\d),(\d)/g, '$1.$2');
+  const t = text.normalize('NFKC').replace(/[×*✕]/g, 'x').replace(/(\d),(\d)/g, '$1.$2')
+    .replace(/厘米|公分/g, 'cm').replace(/毫米/g, 'mm').replace(/米/g, 'm').replace(/寸/g, 'in')
+    .replace(/长度?/g, ' width ').replace(/深度?/g, ' depth ').replace(/高度?/g, ' height ')
+    .replace(/宽度?/g, /长/.test(text) ? ' depth ' : ' width ');
   const unitK = u => { u = (u || '').toLowerCase(); return /mm/.test(u) ? 0.1 : /^m$|met/.test(u) ? 100 : /in|"|”|''/.test(u) ? 2.54 : /ft|'|feet/.test(u) ? 30.48 : null; };
   const num = '(\\d+(?:\\.\\d+)?)', unit = '\\s*(cm|mm|m\\b|in(?:ch(?:es)?)?\\b|"|”|\'\'|ft\\b)?';
   const defUnit = /\d\s*(in\b|inch|"|”)/i.test(t) && !/\d\s*cm/i.test(t) ? 2.54 : /\d\s*mm/i.test(t) && !/\d\s*cm/i.test(t) ? 0.1 : 1;
@@ -1780,20 +1787,30 @@ function parseDims(text) {
       else { w = w || a; d = d || b; }
     }
   }
+  if (!w && !d && !h) { const m = t.match(new RegExp(num + '\\s*(cm|mm|m)\\b', 'i')); if (m) w = +m[1] * (unitK(m[2]) ?? 1); }
   return { w, d, h };
 }
 $('l-go').onclick = () => {
-  const url = $('l-url').value.trim(), text = $('l-text').value.trim();
-  if (!url && !text) { setStatus('l-status', 'Paste a product link and the product\'s size text.', 'err'); return; }
-  let validUrl = '';
-  if (url) { try { const u = new URL(url); if (/^https?:$/.test(u.protocol)) validUrl = u.href; } catch (e) {} if (!validUrl) { setStatus('l-status', 'That link does not look right. It should start with https://', 'err'); return; } }
-  const dims = parseDims(text || decodeURIComponent(validUrl.replace(/^[^/]*\/\/[^/]+/, '')).replace(/[-_/+]/g, ' ')), type = guessType(validUrl + ' ' + text), c = CATALOG[type];
-  if (!dims.w && !dims.d && !dims.h) {
-    setStatus('l-status', text ? 'No sizes found in the pasted text. Look for a line like "Width: 228 cm" on the product page and paste that.' : 'Shops block other sites from reading their pages, so paste the dimensions text from the product page too.', 'err'); return;
+  // The box takes a bare link or an app's share text (e.g. 【淘宝】https://m.tb.cn/… 「title」), so pull the link out and keep the title
+  const raw = $('l-url').value.trim(), m = raw.match(/https?:\/\/[^\s「」【】"'<>，。]+/i) || raw.match(/(?:^|\s)((?:[\w-]+\.)+(?:com|cn|ca|hk|tw|net)\/\S*)/i);
+  const url = m ? (m[1] || m[0]).trim().replace(/^(?!https?:)/i, 'https://') : '';
+  const title = ((raw.match(/「([^」]+)」/) || [])[1] || (m ? raw.replace(m[0], ' ') : raw).replace(/【[^】]*】|点击链接直接打开.*|或者.*搜索.*|\b[A-Z]{2}\d{3,5}\b|^\s*\d\s|\s\d\s*$/g, ' ')).replace(/\s+/g, ' ').trim();
+  const text = [title, $('l-text').value.trim()].filter(Boolean).join('\n');
+  if (!url && !text) { setStatus('l-status', 'Paste a product link, or the share text from the shopping app.', 'err'); return; }
+  let validUrl = '', path = '';
+  if (url) { try { const u = new URL(url); if (/^https?:$/.test(u.protocol)) { validUrl = u.href; path = decodeURIComponent(u.pathname + ' ' + u.search).replace(/[-_/+]/g, ' '); } } catch (e) {} }
+  const dims = parseDims(text + ' ' + path), type = guessType(text + ' ' + path), c = CATALOG[type];
+  if (!dims.w && !dims.d && !dims.h && type === 'box') {
+    setStatus('l-status', 'No size or furniture type in this link or its title. Open the product page, copy the size (e.g. "200*90*85cm" or "Width: 228 cm", in Taobao under 规格 or 详情) and paste it in the second box.', 'err'); $('l-text').focus(); return;
   }
-  const it = addItem(type, { name: nameFromUrl(validUrl) || c.label, w: dims.w || c.w, d: dims.d || c.d, h: dims.h || c.h, color: c.color, color2: c.color2, url: validUrl || undefined, source: 'pasted details' });
-  const miss = ['w', 'd', 'h'].filter(k => !dims[k]).map(k => ({ w: 'width', d: 'depth', h: 'height' })[k]);
-  setStatus('l-status', `Built "${it.name}" as a ${c.label.toLowerCase()} at ${fmtDims(it)}.${miss.length ? ` No ${miss.join(' or ')} found, so a typical size is used there.` : ''} Change the type or colors in Edit.`, 'ok');
+  // Sofas listed by seats (三人位 / 3-seater) get a matching typical width
+  const sm = type === 'sofa' && /([一二两三四1-4])\s*(?:人位?|座)|([1-4])[-\s]?seat/i.exec(text), seats = sm && (sm[1] || sm[2]);
+  const seatW = seats ? ({ 一: 90, 1: 90, 二: 160, 两: 160, 2: 160, 三: 210, 3: 210, 四: 260, 4: 260 })[seats] : 0;
+  const shop = /taobao|tmall|tb\.cn|jd\.com/i.test(validUrl);
+  const name = (title && title.slice(0, 30)) || (!shop && nameFromUrl(validUrl)) || c.label;
+  const it = addItem(type, { name, w: dims.w || seatW || c.w, d: dims.d || c.d, h: dims.h || c.h, color: c.color, color2: c.color2, url: validUrl || undefined, source: 'pasted details' });
+  const miss = ['w', 'd', 'h'].filter(k => !dims[k] && !(k === 'w' && seatW)).map(k => ({ w: 'width', d: 'depth', h: 'height' })[k]);
+  setStatus('l-status', `Built "${it.name}" as a ${c.label.toLowerCase()} at ${fmtDims(it)}.${miss.length ? ` No ${miss.join(' or ')} found, so a typical size is used there. Paste the size from the product page in the second box for an exact model, or type it in Edit.` : ''}`, miss.length === 3 ? 'err' : 'ok');
   renderLists();
 };
 
