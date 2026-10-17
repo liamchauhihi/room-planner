@@ -309,6 +309,12 @@ button { user-select: none; -webkit-user-select: none; }
           <p class="hint">Paste a product link, or the whole share text from an app (Taobao: Share → Copy link). The planner reads the size and the kind of furniture from the link and its title, e.g. "200*90*85cm" or "长180 宽80 高75". If the title has no size, paste the size from the product page below. Shops don't let other websites open their pages, so it can't look inside the page itself.</p>
           <div class="field"><label for="l-url">Product link</label><textarea id="l-url" rows="3" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://www.ikea.com/ca/en/p/kivik-sofa-…&#10;or 【淘宝】https://m.tb.cn/… 「北欧布艺沙发 200*90*85cm」"></textarea></div>
           <div class="field" style="margin-top:10px"><label for="l-text">Size from the product page (only if the link has none)</label><textarea id="l-text" placeholder="Width: 228 cm&#10;Depth: 95 cm&#10;Height: 83 cm&#10;Colour: Tibbleby beige/grey"></textarea></div>
+          <p class="hint" style="margin-top:10px">Or use screenshots from the shop: a picture with the size on it (size chart, 尺寸 picture or 规格 list) and a photo of the piece for a detailed 3D model.</p>
+          <div class="row">
+            <label class="btn file-btn">Size screenshot<input type="file" id="l-shot" accept="image/*" multiple></label>
+            <label class="btn file-btn">Product photo<input type="file" id="l-photo" accept="image/*"></label>
+          </div>
+          <p class="readout" id="l-photo-note" hidden></p>
           <div class="row" style="margin-top:10px"><button class="btn primary" id="l-go">Build it</button></div>
           <p class="status" id="l-status" hidden></p>
         </section>
@@ -458,7 +464,9 @@ button { user-select: none; -webkit-user-select: none; }
       <div class="field" style="flex:0 0 auto"><label for="fp-c2" id="fp-c2l">Accent</label><input type="color" id="fp-c2"></div>
     </div>
     <p class="readout" id="fp-note" style="margin:0"></p>
-    <div class="row"><button class="btn primary" id="fp-add">Add to room</button></div>
+    <div class="row"><button class="btn primary" id="fp-ai">Detailed 3D from photo (AI)</button><button class="btn" id="fp-add">Simple model</button></div>
+    <p class="hint" id="fp-ai-note" style="margin:0">Detailed 3D reads the shape and real texture from the photo with an AI depth model that runs on your phone. The first time it downloads about 27 MB, then it's saved. It sees only the front, so the back is filled in flat.</p>
+    <p class="readout" id="fp-status" style="margin:0"></p>
   </div>
 </div>
 <div class="toast" id="toast" hidden></div>
@@ -1713,19 +1721,165 @@ fpStage.onEnd = () => fpColors();
 $('fp-type').addEventListener('change', fpType);
 $('fp-w').addEventListener('input', () => { fp.hTouched = false; fpFromWidth(); });
 $('fp-h').addEventListener('input', () => { fp.hTouched = true; const h = parseFloat($('fp-h').value); if (isFinite(h) && h > 0) $('fp-w').value = Math.round(h / fpAspect() * 10) / 10; fpNote(); });
+// preset (from the shop tab) fills in the type, name and size the link gave
+function openFp(cv, preset) {
+  fpStage.src = cv;
+  const s = cv; fp.box = [{ p: [s.width * 0.2, s.height * 0.3], color: '#ffd666' }, { p: [s.width * 0.8, s.height * 0.8], color: '#ffd666' }]; fpStage.handles = fp.box; fp.hTouched = false;
+  $('fp-w').value = ''; fp.url = undefined; setStatus('fp-status', ''); $('fp-modal').hidden = false; fpStage.layout();
+  if (preset) $('fp-type').value = preset.type;
+  fpType(); fpColors();
+  if (preset) {
+    $('fp-name').value = preset.name; $('fp-w').value = toDisp(preset.w); $('fp-d').value = toDisp(preset.d);
+    if (preset.h) { $('fp-h').value = toDisp(preset.h); fp.hTouched = true; } else fpFromWidth();
+  }
+}
 $('f-photo').addEventListener('change', async e => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
-  try { fpStage.src = await loadPhoto(f, 1200); } catch (err) { toast('That photo could not be opened. Try a JPEG or PNG.'); return; }
-  const s = fpStage.src; fp.box = [{ p: [s.width * 0.2, s.height * 0.3], color: '#ffd666' }, { p: [s.width * 0.8, s.height * 0.8], color: '#ffd666' }]; fpStage.handles = fp.box; fp.hTouched = false;
-  $('fp-w').value = ''; $('fp-modal').hidden = false; fpStage.layout(); fpType(); fpColors();
+  try { openFp(await loadPhoto(f, 1200)); } catch (err) { toast('That photo could not be opened. Try a JPEG or PNG.'); }
 });
 $('fp-close').onclick = () => $('fp-modal').hidden = true;
 $('fp-add').onclick = () => {
   const n = id => { const v = parseFloat($(id).value); return isFinite(v) && v > 0 ? clamp(fromDisp(v), 1, 1500) : null; };
   const type = $('fp-type').value, c = CATALOG[type], w = n('fp-w'), d = n('fp-d'), h = n('fp-h');
   if (!w || !h) { toast('Type the real width first.'); return; }
-  const it = addItem(type, { name: $('fp-name').value.trim().slice(0, 80) || c.label, w: Math.round(w), d: Math.round(d || c.d), h: Math.round(h), color: $('fp-c').value, color2: $('fp-c2').value, source: 'photo' });
+  const it = addItem(type, { name: $('fp-name').value.trim().slice(0, 80) || c.label, w: Math.round(w), d: Math.round(d || c.d), h: Math.round(h), color: $('fp-c').value, color2: $('fp-c2').value, url: fp.url, source: 'photo' }); renderLists();
   $('fp-modal').hidden = true; toast(`Added "${it.name}" at ${fmtDims(it)}.`);
+};
+
+/* Detailed 3D from a photo: an AI depth model (runs in the browser) turns the boxed part of the photo into a textured relief, closed off with a flat back */
+let depthPipe;
+async function getDepth(onProgress) {
+  if (!depthPipe) depthPipe = (async () => {
+    const { pipeline, env } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1');
+    env.allowLocalModels = false;
+    return pipeline('depth-estimation', 'onnx-community/depth-anything-v2-small', { dtype: 'q8', progress_callback: onProgress });
+  })().catch(e => { depthPipe = null; throw e; });
+  return depthPipe;
+}
+function otsu(vals) {
+  const hist = new Array(256).fill(0); vals.forEach(v => hist[v | 0]++);
+  let sum = 0; for (let i = 0; i < 256; i++) sum += i * hist[i];
+  let wB = 0, sB = 0, best = 0, t = 128;
+  for (let i = 0; i < 256; i++) { wB += hist[i]; if (!wB) continue; const wF = vals.length - wB; if (!wF) break; sB += i * hist[i]; const mB = sB / wB, mF = (sum - sB) / wF, v = wB * wF * (mB - mF) ** 2; if (v > best) { best = v; t = i; } }
+  return t;
+}
+async function photoToModel(crop, w, d, h, onProgress) {
+  const pipe = await getDepth(onProgress);
+  onProgress({ status: 'shape' });
+  const { RawImage } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1');
+  const out = await pipe(RawImage.fromCanvas(crop));
+  const dimg = out.depth, DW = dimg.width, DH = dimg.height, dd = dimg.data, ch = dimg.channels || 1;
+  const depthAt = (u, v) => dd[(Math.min(DH - 1, Math.round(v * (DH - 1))) * DW + Math.min(DW - 1, Math.round(u * (DW - 1)))) * ch];
+  // Grid over the box; near (bright) parts are the piece, far parts (wall, floor behind) are cut away
+  const NX = Math.round(clamp(110 * Math.sqrt(crop.width / crop.height), 40, 160)), NY = Math.round(clamp(NX * crop.height / crop.width, 30, 160));
+  const cells = []; for (let j = 0; j < NY; j++) for (let i = 0; i < NX; i++) cells.push(depthAt((i + 0.5) / NX, (j + 0.5) / NY));
+  const C = (i, j) => cells[j * NX + i], mn = Math.min(...cells), mx = Math.max(...cells), margin = 0.06 * (mx - mn);
+  // the background is what the box edges touch: per row, blend the far side values left to right (min over nearby rows,
+  // so an arm touching the edge doesn't count); a cell is the piece if it is clearly nearer than that, or past the global split
+  const thr = otsu(cells), edge = (i, j) => { let m = Infinity; for (let y = Math.max(0, j - 3); y <= Math.min(NY - 1, j + 3); y++) m = Math.min(m, C(i, y), C(i ? i - 1 : 1, y)); return m; };
+  const bgL = [], bgR = []; for (let j = 0; j < NY; j++) { bgL.push(edge(0, j)); bgR.push(edge(NX - 1, j)); }
+  const bgTop = Math.min(...Array.from({ length: NX }, (_, i) => C(i, 0)));
+  let keep = cells.map((v, k) => { const i = k % NX, j = (k / NX) | 0, t = i / (NX - 1), bg = Math.max(bgL[j] * (1 - t) + bgR[j] * t, j < 2 ? bgTop : 0); return v > Math.min(thr, bg + margin); });
+  const frac = keep.filter(Boolean).length / keep.length;
+  if (frac < 0.2 || frac > 0.97) keep = keep.map(() => true);
+  // smooth the outline: open (erode twice, grow back) to drop thin slivers that would stick out as fins, then a 5x5 majority three times;
+  // after that keep only the biggest piece so stray specks don't become spikes
+  const nb = (m, k) => { const i = k % NX, j = (k / NX) | 0; let n = 0; for (let y = -1; y <= 1; y++) for (let x = -1; x <= 1; x++) { const ii = i + x, jj = j + y; if (ii >= 0 && jj >= 0 && ii < NX && jj < NY && m[jj * NX + ii]) n++; } return n; };
+  const orig = keep;
+  for (let it = 0; it < 2; it++) { const m = keep; keep = m.map((v, k) => v && nb(m, k) === 9); }
+  for (let it = 0; it < 2; it++) { const m = keep; keep = m.map((v, k) => v || nb(m, k) > 0); }
+  keep = keep.map((v, k) => v && orig[k]);
+  const nb5 = (m, k) => { const i = k % NX, j = (k / NX) | 0; let n = 0, t = 0; for (let y = -2; y <= 2; y++) for (let x = -2; x <= 2; x++) { const ii = i + x, jj = j + y; if (ii >= 0 && jj >= 0 && ii < NX && jj < NY) { t++; if (m[jj * NX + ii]) n++; } } return n / t; };
+  for (let it = 0; it < 3; it++) { const m = keep; keep = m.map((_, k) => nb5(m, k) > 0.5); }
+  const comp = new Int32Array(keep.length).fill(-1); let best = -1, bestN = 0;
+  for (let k0 = 0; k0 < keep.length; k0++) if (keep[k0] && comp[k0] < 0) {
+    const st = [k0]; comp[k0] = k0; let n = 0;
+    while (st.length) { const k = st.pop(), i = k % NX, j = (k / NX) | 0; n++; for (const [ii, jj] of [[i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]]) { const q = jj * NX + ii; if (ii >= 0 && jj >= 0 && ii < NX && jj < NY && keep[q] && comp[q] < 0) { comp[q] = k0; st.push(q); } } }
+    if (n > bestN) { bestN = n; best = k0; }
+  }
+  if (bestN > keep.length * 0.1) keep = keep.map((v, k) => v && comp[k] === best); else keep = keep.map(() => true);
+  const kv = cells.filter((_, k) => keep[k]).sort((a, b) => a - b), lo = kv[Math.floor(kv.length * 0.03)], top = kv[Math.floor(kv.length * 0.99)];
+  // depth 0..1 inside the piece: 0 = farthest kept part (sits at the back), 1 = nearest (front face)
+  const zf = v => clamp((v - lo) / Math.max(1, top - lo), 0, 1);
+  const W = w / 100, D = d / 100, H = h / 100, back = -D / 2;
+  const front = v => back + D * (0.12 + 0.88 * zf(v));
+  // each vertex takes the mean depth of the kept cells within two cells of it, so the background never pulls an edge back into a spike
+  const kept = (i, j) => i >= 0 && j >= 0 && i < NX && j < NY && keep[j * NX + i];
+  const z = new Float32Array((NX + 1) * (NY + 1));
+  for (let j = 0; j <= NY; j++) for (let i = 0; i <= NX; i++) {
+    let a = 0, n = 0;
+    for (let y = j - 2; y <= j + 1; y++) for (let x = i - 2; x <= i + 1; x++) if (kept(x, y)) { const wgt = (x === i - 1 || x === i) && (y === j - 1 || y === j) ? 2 : 1; a += C(x, y) * wgt; n += wgt; }
+    z[j * (NX + 1) + i] = n ? a / n : lo;
+  }
+  // outline vertices drop to the back so ragged rows round off instead of sticking out as ledges
+  for (let j = 0; j <= NY; j++) for (let i = 0; i <= NX; i++) {
+    const c4 = [kept(i - 1, j - 1), kept(i, j - 1), kept(i - 1, j), kept(i, j)];
+    if (c4.includes(false)) z[j * (NX + 1) + i] = lo;
+  }
+  const pos = [], uv = [], idxF = [], idxB = [], vid = (i, j) => j * (NX + 1) + i, NV = (NX + 1) * (NY + 1);
+  for (let pass = 0; pass < 2; pass++) for (let j = 0; j <= NY; j++) for (let i = 0; i <= NX; i++) {
+    pos.push((i / NX - 0.5) * W, (1 - j / NY) * H, pass ? back : front(z[vid(i, j)]));
+    uv.push(pass ? 1 - i / NX : i / NX, 1 - j / NY);
+  }
+  for (let j = 0; j < NY; j++) for (let i = 0; i < NX; i++) {
+    if (!kept(i, j)) continue;
+    const a = vid(i, j), b = vid(i + 1, j), c = vid(i, j + 1), e = vid(i + 1, j + 1);
+    // steep cells (the photo only grazes them) would smear the texture into streaks, so they take the side colour
+    const zs = [a, b, c, e].map(v => pos[v * 3 + 2]);
+    (Math.max(...zs) - Math.min(...zs) > 2.5 * W / NX ? idxB : idxF).push(a, c, b, b, c, e);
+    idxB.push(a + NV, b + NV, c + NV, b + NV, e + NV, c + NV);
+    // walls along the outline join the front to the back
+    const side = (p, q) => idxB.push(p, q, q + NV, p, q + NV, p + NV);
+    if (!kept(i, j - 1)) side(b, a);
+    if (!kept(i, j + 1)) side(c, e);
+    if (!kept(i - 1, j)) side(a, c);
+    if (!kept(i + 1, j)) side(e, b);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex([...idxF, ...idxB]); geo.addGroup(0, idxF.length, 0); geo.addGroup(idxF.length, idxB.length, 1);
+  geo.computeVertexNormals();
+  const tex = new THREE.CanvasTexture(crop); tex.colorSpace = THREE.SRGBColorSpace; tex.userData.mimeType = 'image/jpeg';
+  // sides and back can't be seen in the photo, so they get the piece's average colour instead of a smeared texture
+  const px = crop.getContext('2d').getImageData(0, 0, crop.width, crop.height).data, avg = [0, 0, 0]; let na = 0;
+  for (let j = 0; j < NY; j++) for (let i = 0; i < NX; i++) if (keep[j * NX + i]) { const o = (Math.floor((j + 0.5) / NY * crop.height) * crop.width + Math.floor((i + 0.5) / NX * crop.width)) * 4; avg[0] += px[o]; avg[1] += px[o + 1]; avg[2] += px[o + 2]; na++; }
+  const sideCol = new THREE.Color().setRGB(...avg.map(v => v / Math.max(1, na) / 255 * 0.85), THREE.SRGBColorSpace);
+  const mesh = new THREE.Mesh(geo, [new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85 }), new THREE.MeshStandardMaterial({ color: sideCol, roughness: 0.9 })]);
+  mesh.name = 'photo-model';
+  const { GLTFExporter } = await import('three/addons/exporters/GLTFExporter.js');
+  return new GLTFExporter().parseAsync(mesh, { binary: true, maxTextureSize: 1024 });
+}
+$('fp-ai').onclick = async () => {
+  const n = id => { const v = parseFloat($(id).value); return isFinite(v) && v > 0 ? clamp(fromDisp(v), 1, 1500) : null; };
+  const type = $('fp-type').value, c = CATALOG[type], w = n('fp-w'), d = n('fp-d') || c.d, h = n('fp-h');
+  if (!w || !h) { toast('Type the real width first.'); return; }
+  const s = fpStage.src, [a, b] = fp.box.map(q => q.p);
+  const x0 = Math.max(0, Math.min(a[0], b[0])), x1 = Math.min(s.width, Math.max(a[0], b[0])), y0 = Math.max(0, Math.min(a[1], b[1])), y1 = Math.min(s.height, Math.max(a[1], b[1]));
+  if (x1 - x0 < 16 || y1 - y0 < 16) { setStatus('fp-status', 'Make the box bigger around the piece.', 'err'); return; }
+  const crop = document.createElement('canvas'); crop.width = Math.round(x1 - x0); crop.height = Math.round(y1 - y0);
+  crop.getContext('2d').drawImage(s, x0, y0, crop.width, crop.height, 0, 0, crop.width, crop.height);
+  const btn = $('fp-ai'); btn.disabled = true; $('fp-add').disabled = true;
+  const files = {};
+  const prog = p => {
+    if (p.status === 'progress' && p.total) { files[p.file] = [p.loaded, p.total]; const v = Object.values(files), l = v.reduce((t, x) => t + x[0], 0), t = v.reduce((t, x) => t + x[1], 0); setStatus('fp-status', `Downloading the AI model… ${Math.round(l / 1048576)} of ${Math.round(t / 1048576)} MB (only the first time)`); }
+    else if (p.status === 'shape') setStatus('fp-status', 'Reading the shape from the photo… this can take 10–30 seconds on a phone.');
+  };
+  setStatus('fp-status', 'Loading the AI model…');
+  try {
+    const buf = await photoToModel(crop, w, d, h, prog);
+    const { wrap, size } = normalizeModel(await parseModel('glb', buf));
+    const id = 'm' + Date.now().toString(36);
+    modelCache.set(id, wrap); const stored = await idb.put(id, { fmt: 'glb', buf });
+    const base = { w: Math.max(1, size.x * 100), d: Math.max(1, size.z * 100), h: Math.max(1, size.y * 100) };
+    const name = $('fp-name').value.trim().slice(0, 80) || c.label;
+    const it = addItem('scan', { name, w: Math.round(w), d: Math.round(d), h: Math.round(h), model: { id, name: 'photo 3D', base }, url: fp.url, source: 'photo' });
+    $('fp-modal').hidden = true; setStatus('fp-status', '');
+    toast(`Added detailed "${it.name}" at ${fmtDims(it)}.${stored ? '' : ' It will need making again next visit.'}`);
+  } catch (err) {
+    console.error(err);
+    setStatus('fp-status', 'The AI model could not run here (it needs a good connection and some free memory). Try again, or use Simple model.', 'err');
+  } finally { btn.disabled = false; $('fp-add').disabled = false; }
 };
 
 /* Furniture scan import */
@@ -1790,6 +1944,37 @@ function parseDims(text) {
   if (!w && !d && !h) { const m = t.match(new RegExp(num + '\\s*(cm|mm|m)\\b', 'i')); if (m) w = +m[1] * (unitK(m[2]) ?? 1); }
   return { w, d, h };
 }
+/* Shop screenshots: read the size text with OCR (Chinese + English, runs in the browser), and keep a product photo for the detailed model */
+let ocrWorker, shopPhoto = null;
+async function ocr(cv, onProgress) {
+  if (!ocrWorker) ocrWorker = (async () => {
+    const { createWorker } = (await import('https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/dist/tesseract.esm.min.js')).default;
+    return createWorker(['chi_sim', 'eng'], 1, { logger: m => onProgress && onProgress(m) });
+  })().catch(e => { ocrWorker = null; throw e; });
+  const w = await ocrWorker, { data } = await w.recognize(cv);
+  return data.text;
+}
+$('l-shot').addEventListener('change', async e => {
+  const fs = [...e.target.files]; e.target.value = ''; if (!fs.length) return;
+  setStatus('l-status', 'Reading the size from the screenshot… (the first time downloads the text reader, about 3 MB)');
+  try {
+    const found = [];
+    for (const f of fs) {
+      const text = (await ocr(await loadPhoto(f, 2000), m => { if (m.status === 'recognizing text') setStatus('l-status', `Reading the screenshot… ${Math.round(m.progress * 100)}%`); }))
+        .replace(/([\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff\d])/g, '$1').replace(/(\d)\s+(?=(cm|mm|厘米|公分|毫米|米)\b)/gi, '$1');
+      text.split(/\n+/).map(l => l.trim()).filter(l => /\d/.test(l) && /cm|mm|厘米|公分|毫米|米|长|宽|高|深|尺寸|规格|width|depth|height|\d\s*[x×*]\s*\d/i.test(l) && !/[¥￥]|元|价|券|销量/.test(l)).forEach(l => found.push(l));
+    }
+    if (!found.length) { setStatus('l-status', "No size found in that picture. Try a screenshot where the numbers are big and sharp (e.g. the 尺寸 picture or the 规格 list), or type the size below.", 'err'); return; }
+    $('l-text').value = [$('l-text').value.trim(), ...found].filter(Boolean).join('\n');
+    const d = parseDims(found.join('\n'));
+    setStatus('l-status', d.w || d.d || d.h ? `Read ${['w', 'd', 'h'].filter(k => d[k]).map(k => ({ w: 'width', d: 'depth', h: 'height' })[k] + ' ' + Math.round(d[k]) + ' cm').join(', ')}. Check the text box below, then press Build it.` : 'Read some text with numbers (in the box below), but not a clear width/depth/height. Fix it there, then press Build it.', d.w || d.d || d.h ? 'ok' : 'err');
+  } catch (err) { console.error(err); setStatus('l-status', 'The text reader could not load here. Check the connection, or type the size below.', 'err'); }
+});
+$('l-photo').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  try { shopPhoto = await loadPhoto(f, 1200); } catch (err) { toast('That photo could not be opened. Try a JPEG or PNG.'); return; }
+  setStatus('l-photo-note', 'Product photo ready. Build it will open it so you can make a detailed 3D model at the shop size.');
+});
 $('l-go').onclick = () => {
   // The box takes a bare link or an app's share text (e.g. 【淘宝】https://m.tb.cn/… 「title」), so pull the link out and keep the title
   const raw = $('l-url').value.trim(), m = raw.match(/https?:\/\/[^\s「」【】"'<>，。]+/i) || raw.match(/(?:^|\s)((?:[\w-]+\.)+(?:com|cn|ca|hk|tw|net)\/\S*)/i);
@@ -1808,6 +1993,12 @@ $('l-go').onclick = () => {
   const seatW = seats ? ({ 一: 90, 1: 90, 二: 160, 两: 160, 2: 160, 三: 210, 3: 210, 四: 260, 4: 260 })[seats] : 0;
   const shop = /taobao|tmall|tb\.cn|jd\.com/i.test(validUrl);
   const name = (title && title.slice(0, 30)) || (!shop && nameFromUrl(validUrl)) || c.label;
+  if (shopPhoto) {
+    openFp(shopPhoto, { type, name, w: dims.w || seatW || c.w, d: dims.d || c.d, h: dims.h || 0 }); fp.url = validUrl || undefined;
+    shopPhoto = null; setStatus('l-photo-note', ''); setStatus('l-status', '');
+    setStatus('fp-status', 'Size filled in from the shop. Drag the box around the piece, then tap Detailed 3D.', 'ok');
+    return;
+  }
   const it = addItem(type, { name, w: dims.w || seatW || c.w, d: dims.d || c.d, h: dims.h || c.h, color: c.color, color2: c.color2, url: validUrl || undefined, source: 'pasted details' });
   const miss = ['w', 'd', 'h'].filter(k => !dims[k] && !(k === 'w' && seatW)).map(k => ({ w: 'width', d: 'depth', h: 'height' })[k]);
   setStatus('l-status', `Built "${it.name}" as a ${c.label.toLowerCase()} at ${fmtDims(it)}.${miss.length ? ` No ${miss.join(' or ')} found, so a typical size is used there. Paste the size from the product page in the second box for an exact model, or type it in Edit.` : ''}`, miss.length === 3 ? 'err' : 'ok');
